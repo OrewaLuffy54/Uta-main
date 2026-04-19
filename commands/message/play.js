@@ -2,109 +2,65 @@ const { EmbedBuilder } = require('discord.js');
 const shiva = require('../../shiva');
 const { getYouTubeLinksFromSpotify } = require('../../utils/spotifyHandler');
 
-const COMMAND_SECURITY_TOKEN = shiva.SECURITY_TOKEN;
-
 module.exports = {
     name: 'play',
-    aliases: ['p', 'music', 'song', 'add'],
-    description: 'Play a song or add to queue',
-    securityToken: COMMAND_SECURITY_TOKEN,
+    aliases: ['p', 'song'],
     
     async execute(message, args, client) {
-        if (!shiva || !shiva.validateCore || !shiva.validateCore()) {
-            const embed = new EmbedBuilder()
-                .setDescription('❌ System core offline - Command unavailable')
-                .setColor('#FF0000');
-            return message.reply({ embeds: [embed] }).catch(() => {});
-        }
 
-        message.shivaValidated = true;
-        message.securityToken = COMMAND_SECURITY_TOKEN;
-
-        setTimeout(() => {
-            message.delete().catch(() => {});
-        }, 4000);
-        
-        const ConditionChecker = require('../../utils/checks');
-        const PlayerHandler = require('../../utils/player');
-        const ErrorHandler = require('../../utils/errorHandler');
-        
         const query = args.join(' ');
-        if (!query) {
-            const embed = new EmbedBuilder().setDescription('❌ Please provide a song to play!');
-            return message.reply({ embeds: [embed] })
-                .then(m => setTimeout(() => m.delete().catch(() => {}), 3000));
-        }
+        if (!query) return message.reply("❌ Provide a song");
+
+        const PlayerHandler = require('../../utils/player');
 
         try {
-            const checker = new ConditionChecker(client);
-            const conditions = await checker.checkMusicConditions(
-                message.guild.id, 
-                message.author.id, 
-                message.member.voice?.channelId,
-                false
-            );
-
-            const errorMsg = checker.getErrorMessage(conditions, 'play');
-            if (errorMsg) {
-                const embed = new EmbedBuilder().setDescription(errorMsg);
-                return message.reply({ embeds: [embed] })
-                    .then(m => setTimeout(() => m.delete().catch(() => {}), 3000));
-            }
-
-            let targetVC = message.member.voice.channelId;
-            if (conditions.centralEnabled && conditions.botInCentralVC && conditions.centralVC) {
-                targetVC = conditions.centralVC;
-            }
 
             const playerHandler = new PlayerHandler(client);
-            const player = await playerHandler.createPlayer(
+
+            let player = await playerHandler.createPlayer(
                 message.guild.id,
-                targetVC,
+                message.member.voice.channelId,
                 message.channel.id
             );
 
-            // --- Spotify handling starts here ---
+            // 🔥 FIX: FORCE CONNECTION
+            if (!player.connected) {
+                client.riffy.createConnection({
+                    guildId: message.guild.id,
+                    voiceChannelId: message.member.voice.channelId,
+                    textChannelId: message.channel.id,
+                    deaf: true
+                });
+
+                player = client.riffy.players.get(message.guild.id);
+            }
+
+            // Spotify handling
             if (query.includes('spotify.com')) {
                 const ytUrls = await getYouTubeLinksFromSpotify(query);
-
-                if (!ytUrls.length) {
-                    const embed = new EmbedBuilder().setDescription('❌ Could not find matching songs for this Spotify link.');
-                    return message.reply({ embeds: [embed] })
-                        .then(m => setTimeout(() => m.delete().catch(() => {}), 3000));
-                }
 
                 for (const ytUrl of ytUrls) {
                     await playerHandler.playSong(player, ytUrl, message.author);
                 }
 
-                const embed = new EmbedBuilder().setDescription(`🎶 Added ${ytUrls.length} track(s) from Spotify!`);
-                return message.reply({ embeds: [embed] })
-                    .then(m => setTimeout(() => m.delete().catch(() => {}), 3000));
+                return message.reply(`🎶 Added ${ytUrls.length} track(s) from Spotify!`);
             }
-            // --- Spotify handling ends here ---
 
             const result = await playerHandler.playSong(player, query, message.author);
 
             if (result.type === 'track') {
-                const embed = new EmbedBuilder().setDescription(`✅ Added to queue: **${result.track.info.title}**`);
-                return message.reply({ embeds: [embed] })
-                    .then(m => setTimeout(() => m.delete().catch(() => {}), 3000));
-            } else if (result.type === 'playlist') {
-                const embed = new EmbedBuilder().setDescription(`✅ Added **${result.tracks}** songs from playlist: **${result.name}**`);
-                return message.reply({ embeds: [embed] })
-                    .then(m => setTimeout(() => m.delete().catch(() => {}), 3000));
-            } else {
-                const embed = new EmbedBuilder().setDescription('❌ No results found for your query!');
-                return message.reply({ embeds: [embed] })
-                    .then(m => setTimeout(() => m.delete().catch(() => {}), 3000));
+                return message.reply(`✅ Added: **${result.track.info.title}**`);
             }
 
-        } catch (error) {
-            const embed = new EmbedBuilder().setDescription('❌ An error occurred while trying to play music!');
-            console.error('Play command error:', error);
-            return message.reply({ embeds: [embed] })
-                .then(m => setTimeout(() => m.delete().catch(() => {}), 3000));
+            if (result.type === 'playlist') {
+                return message.reply(`🎵 Added **${result.tracks}** songs`);
+            }
+
+            return message.reply('❌ No results found');
+
+        } catch (err) {
+            console.error(err);
+            return message.reply('❌ Error playing song');
         }
     }
 };
